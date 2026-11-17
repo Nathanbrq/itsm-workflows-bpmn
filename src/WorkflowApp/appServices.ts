@@ -1529,5 +1529,137 @@ class AppServices {
         return htmlParts.join('\n');
     }
 
+    /**
+     * Recherche un utilisateur par son login (champ name). Retourne la correspondance exacte si elle existe,
+     * sinon null (la recherche ITSM-NG est de type "contient", une correspondance partielle n'est pas fiable).
+     */
+    static async findUserByLogin(base: string, headers: any, login: string): Promise<any> {
+        const response = await axios.get(`${base}/User`, {
+            headers,
+            params: { "searchText[name]": login, "range": "0-10" }
+        });
+
+        if (!response.data || !Array.isArray(response.data)) return null;
+        return response.data.find(u => String(u.name).toLowerCase() === String(login).toLowerCase()) || null;
+    }
+
+    /**
+     * Résout un utilisateur à partir de son email.
+     * Paramètres : email (obligatoire), storeAs (nom de la donnée qui reçoit l'id, "resolvedUserId" par défaut).
+     */
+    async resolveUserByEmail(input, context) {
+        const email = input && input.email;
+
+        if (!email) {
+            return { error: "Email manquant" };
+        }
+
+        const base = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php`;
+
+        try {
+            const headers = await this.getApiHeaders();
+
+            const response = await axios.get(`${base}/UserEmail`, {
+                headers,
+                params: { "searchText[email]": email, "range": "0-10" }
+            });
+
+            if (!response.data || !Array.isArray(response.data) || response.data.length === 0) {
+                console.error(`resolveUserByEmail: aucun utilisateur trouvé pour ${email}`);
+                return { error: "Utilisateur non trouvé", email };
+            }
+
+            const match = response.data.find(u => String(u.email).toLowerCase() === String(email).toLowerCase())
+                || response.data[0];
+            const storeAs = input.storeAs || "resolvedUserId";
+            context.item.data[storeAs] = match.users_id;
+
+            console.log(`resolveUserByEmail: ${email} → users_id ${match.users_id} stocké dans data.${storeAs}`);
+            return { success: true, userId: match.users_id, email };
+
+        } catch (error) {
+            console.error("resolveUserByEmail erreur:", error.message);
+            return { error: error.message };
+        }
+    }
+
+    /**
+     * Résout un lieu à partir de son nom.
+     * Paramètres : locationName (obligatoire), storeAs (nom de la donnée qui reçoit l'id, "resolvedLocationId" par défaut).
+     */
+    async resolveLocation(input, context) {
+        const locationName = input && input.locationName;
+
+        if (!locationName) {
+            return { error: "Nom de location manquant" };
+        }
+
+        const base = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php`;
+
+        try {
+            const headers = await this.getApiHeaders();
+
+            const response = await axios.get(`${base}/Location`, {
+                headers,
+                params: { "searchText[name]": locationName, "range": "0-10" }
+            });
+
+            if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+                const match = response.data.find(l => String(l.name).toLowerCase() === String(locationName).toLowerCase())
+                    || response.data[0];
+                const storeAs = input.storeAs || "resolvedLocationId";
+                context.item.data[storeAs] = match.id;
+                console.log(`Location résolue : "${locationName}" → id ${match.id} stocké dans data.${storeAs}`);
+                return { success: true, locationId: match.id };
+            }
+
+            console.warn(`Aucune location trouvée pour : "${locationName}"`);
+            return { error: "Location non trouvée", locationName };
+
+        } catch (error) {
+            console.error("Erreur resolveLocation:", error.message);
+            return { error: error.message };
+        }
+    }
+
+    /**
+     * Vérifie si un utilisateur existe à partir de son login.
+     * Paramètres : login (obligatoire), storeAs (nom de la donnée booléenne, "userExists" par défaut),
+     * storeUserIdAs (nom de la donnée qui reçoit l'id de l'utilisateur, "resolvedUserId" par défaut).
+     */
+    async checkUserExists(input, context) {
+        const login = input && input.login;
+        const storeAs = (input && input.storeAs) || "userExists";
+        const storeUserIdAs = (input && input.storeUserIdAs) || "resolvedUserId";
+
+        context.item.data[storeAs] = false;
+        context.item.data[storeUserIdAs] = null;
+
+        if (!login) {
+            return { userExists: false, error: "Login manquant" };
+        }
+
+        const base = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php`;
+
+        try {
+            const headers = await this.getApiHeaders();
+            const user = await AppServices.findUserByLogin(base, headers, login);
+
+            if (user) {
+                context.item.data[storeAs] = true;
+                context.item.data[storeUserIdAs] = user.id;
+                console.log(`Utilisateur trouvé pour le login: ${login}, id: ${user.id}`);
+            } else {
+                console.log(`Utilisateur non trouvé pour le login: ${login}`);
+            }
+
+            return { userExists: !!user, login };
+
+        } catch (error) {
+            console.error("checkUserExists erreur:", error.message);
+            return { userExists: false, error: error.message };
+        }
+    }
+
 }
 export { AppServices }
